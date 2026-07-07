@@ -1,0 +1,11 @@
+function infmsg { echo "$(tput setaf 2)+$(tput sgr0) $@" >&2; }
+function wrnmsg { echo "$(tput setaf 3)!$(tput sgr0) $@" >&2; }
+function errmsg { echo "$(tput setaf 1)*$(tput sgr0) $@" >&2; exit 1; }
+
+# use with PS1="$itflag \[$(pwd)\]\u@\h:\w>"
+itflag="$(tput sgr0)$(tput setab 2) $(tput setab 7) $(tput setab 1) $(tput sgr0)"
+
+export PATH=~/bin:$PATH
+
+complete -W "edit backup help triplet lookup" home.py
+

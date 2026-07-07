@@ -1,0 +1,422 @@
+from __future__ import annotations
+
+import io
+import os
+import sys
+import re
+import argparse
+import inspect
+import logging
+import shutil
+import socket
+import subprocess
+import contextlib
+import tarfile
+from pathlib import Path
+
+THISDIR = Path(__file__).parent.absolute()                  # ~/.home
+CONFIGDIR = Path("~/.config/home").expanduser().absolute()  # ~/.config/home
+
+HOME = Path(os.getenv("HOME"))                              # ~/
+HOMEDIR = Path("~/.home").expanduser().absolute()           # ~/.home
+HOMEGITDIR = Path(f"{HOMEDIR}.git")                         # ~/.home.git
+
+HOMETAG = "MODIFIED BY HOME PATCH"
+
+
+log = logging.getLogger("homelib")
+
+def startswith(txt, begins):
+    begins = [begins] if isinstance(begins, str) else begins
+    for begin in begins:
+        if txt.lstrip().startswith(begin):
+            return begin, txt.lstrip()[len(begin):].strip()
+
+
+def indent(txt: str, pre: str = " " * 2) -> str:
+    "simple text indentation"
+
+    from textwrap import dedent
+
+    txt = dedent(txt)
+    if txt.endswith("\n"):
+        last_eol = "\n"
+        txt = txt[:-1]
+    else:
+        last_eol = ""
+
+    result = pre + txt.replace("\n", "\n" + pre) + last_eol
+    return result if result.strip() else result.strip()
+
+
+def which(path):
+    path = Path(path)
+    if path.exists():
+        return path
+    paths = (os.environ.get("PATH", "") or "").split(os.pathsep)
+    exts = ["", *(os.environ.get("PATHEXT", "") or "").split(os.pathsep)]
+    for subpath in paths:
+        for ext in ["", *exts]:
+            candidate = (Path(subpath) / path).with_suffix(ext)
+            if candidate.exists():
+                return candidate
+
+def du(path: Path):
+    return sum(p.lstat().st_size for p in path.rglob("*"))
+
+
+def runc(cmd):
+    return subprocess.check_output([str(c) for c in cmd], encoding="utf-8")
+
+
+def run(cmd):
+    return subprocess.call([str(c) for c in cmd], encoding="utf-8")
+
+
+def hostname():
+    cfg = CONFIGDIR / "hostname"
+    if cfg.exists():
+        return cfg.read_text().strip().partition("\n")[0]
+    raise NotImplementedError(f"hostname() failure (cannot find {cfg})")
+
+
+def triplet():
+    if sys.platform in {"darwin", "linux"}:
+        platform = sys.platform
+    elif sys.platform in {"win32"}:
+        platform = sys.platform
+    else:
+        raise NotImplementedError(f"unhandled {sys.platform=}")
+    log.debug("resolved platform='%s'", platform)
+
+    host = hostname()
+    log.debug("resolved host='%s'", host)
+
+    # root vmi544982.contaboserver.net linux
+    key = "USERNAME" if platform in {"win32",} else "USER"
+
+    user = os.getenv(key)
+    log.debug("user set from %s '%s'", key, user)
+
+    return (user, host, platform)
+
+
+def loadmod(path):
+    from importlib import machinery, util
+    try:
+        machinery.SOURCE_SUFFIXES.append("")
+        spec = util.spec_from_file_location(Path(path).name, Path(path))
+    finally:
+        machinery.SOURCE_SUFFIXES.pop()
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Home:
+    def __init__(self, root: Path|None|str = THISDIR / "c"):
+        self.root = Path(root or THISDIR / "c").expanduser().absolute()
+
+    def lookup(self, path: Path|str|None, single: bool=True) -> Path|list[Path]:
+        user, machine, system = triplet()
+        candidates = [
+            self.root / user / system / machine,
+            self.root / user / machine,
+            self.root / user,
+        ]
+        if self.root != (THISDIR / "c"):
+            candidates.append(self.root)
+        if not path:
+            return candidates
+        found = []
+        for candidate in candidates:
+            if (candidate / path).exists():
+                found.append(candidate / path)
+        if single and len(found) != 1:
+            raise RuntimeError(f"found {len(found)} items, but one requested: {found}")
+        return found[0] if single else found    
+
+
+class TarBase:
+    def __init__(self, path: Path, dryrun: bool):
+        self.path = Path(path).expanduser().absolute()
+        self.tgz = None
+        self.dryrun = dryrun
+        self.report = []
+
+    def __enter__(self):
+        if self.path.exists():
+            raise FileExistsError(f"file present, {self.path}")
+        self.path.parent.mkdir(exist_ok=True, parents=True)
+        self.tgz = None if self.dryrun else tarfile.open(self.path, "x:")
+        log.info("%swriting backup to %s", "(not) " if self.dryrun else "",  self.path)
+        return self
+    
+    def __exit__(self, tb_type, tb_value, tb_obj):
+        if self.tgz:
+            self.tgz.close()
+            runc(["gzip", self.path])
+
+    @staticmethod
+    def ident(txt):
+        if match := re.search(r"(?P<kind>(venv|conda|rpm|include))\s*:", txt):
+            return (match.group("kind"), txt.partition(":")[2].strip())
+        return ("file", txt.strip())
+
+    @classmethod
+    def process_config(cls, config: Path, home: Path = Path("~")):
+        repos = []
+        for line in config.read_text().split("\n"):
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            tag, txt = cls.ident(line)
+            if tag == "include":
+                assert re.search(r"^~[a-zA-Z]", txt), f"include '{txt}' should start with ~[a-zA-Z]"
+                home1 = Path(txt.partition("/")[0]).expanduser()
+                repos.extend(cls.process_config(Path(txt).expanduser(), home1))
+                continue
+            path = (home.expanduser() / Path(txt)).expanduser()
+            repos.append((tag, path))
+        return repos
+
+    def create(self, repos: list[tuple[str|None,Path]]):
+        for tag, path in repos:
+            function = getattr(self, f"add_{tag}")
+            function(path)
+
+        for size, path in sorted(self.report, reverse=True):
+            size_mb = round(size / 1024**2, 3)
+            print(f"{size_mb:12_}Mb {path}")
+
+
+class Tar(TarBase):
+    def find_conda(self) -> None | Path:
+        if getattr(self, "conda", None):
+            return self.conda
+        
+        exes = ["micromamba", "mamba", "conda", "/home/users/build/bin/micromamba"]
+        for exe in exes:
+            found = shutil.which(exe)
+            if not found:
+                continue
+            log.info("found 'conda' from %s", found)
+            self.conda = Path(found)
+            return self.conda
+        raise RuntimeError("cannot find conda", exes)
+
+    def add_conda(self, path: Path):
+        log.info("saving conda yaml for %s", path)
+        out = subprocess.check_output([self.find_conda(), "list", "--export", "-p", str(path)])
+
+        name = f"{str(path).lstrip('/')}.yaml"
+        info = tarfile.TarInfo(name=name)
+        info.size=len(out)
+        self.report.append((len(out), path.with_suffix(".txt")))
+        if self.tgz:
+            self.tgz.addfile(tarinfo=info, fileobj=io.BytesIO(out))
+
+    def add_venv(self, path: Path):
+        log.info("saving venv requirement for %s", path)
+        pip = path / "bin" / "pip"
+        if not pip.exists():
+            log.warning("no pip found in %s", pip)
+            return
+        out = runc([pip, "list", "--format", "freeze", path])
+        name = f"{str(path).lstrip('/')}.txt"
+        info = tarfile.TarInfo(name=name)
+        info.size=len(out)
+        self.report.append((len(out), path.with_suffix(".txt")))
+        if self.tgz:
+            self.tgz.addfile(tarinfo=info, fileobj=io.BytesIO(out.encode("utf-8")))
+
+    def add_rpm(self, path: Path):
+        log.info("saving rpm list to  %s", path)
+        out = runc(["rpm", "-qa"])
+
+        name = str(path).lstrip('/')
+        info = tarfile.TarInfo(name=name)
+        info.size=len(out)
+        self.report.append((len(out), path))
+        if self.tgz:
+            self.tgz.addfile(tarinfo=info, fileobj=io.BytesIO(out.encode("utf-8")))
+
+    def add_file(self, path: Path):
+        name = str(path).lstrip('/')
+        log.info("saving file %s", name)
+        self.report.append((du(path), path))
+        if self.tgz:
+            def filter(tinfo):
+                nonlocal self, path
+                if tinfo.name == str(self.path).lstrip("/"):
+                    return
+                return tinfo
+            self.tgz.add(path, arcname=name, filter=filter)
+
+
+def grun(cmds, dryrun=False):
+    cmds = [ "git",
+        "--git-dir", HOMEGITDIR,
+        "--work-tree", HOME,
+        *cmds
+    ]
+    cmds = [str(c) for c in cmds]
+    if dryrun:
+        log.debug("executing: %s", " ".join(cmds))
+        return
+    subprocess.check_call(cmds)
+
+
+class Command:
+    COMMANDS = []
+
+    @classmethod
+    def add_arguments(cls, parser):
+        parser.add_argument("-v", "--verbose", dest="count-verbose",  action="count", default=0)
+        parser.add_argument("-q", "--quiet", dest="count-quiet", action="count", default=0)
+    
+    @classmethod
+    def process_options(cls, options):
+        level = (getattr(options, "count-verbose", 0) or 0) - (getattr(options, "count-quiet", 0) or 0)
+        level = min(max(level, -1), 1)
+        logging.basicConfig(level=logging.WARNING if level < 0 else logging.DEBUG if level > 0 else logging.INFO)
+        delattr(options, "count-verbose")
+        delattr(options, "count-quiet")
+        return options
+
+
+def cli(fallback=None):
+    classmap = {}
+    for klass in [*Command.__subclasses__(), *Command.COMMANDS]:
+        name = getattr(klass, "NAME", klass.__name__.lower()) 
+        assert name not in classmap, f"duplicated entry {name=}"
+        classmap[name] = klass
+
+    class F(
+        argparse.ArgumentDefaultsHelpFormatter,
+        argparse.RawDescriptionHelpFormatter,
+        #argparse.MetavarTypeHelpFormatter
+    ):
+        pass
+
+    def check(key):
+        if len(sys.argv) >=2 and sys.argv[1] in classmap:
+            cls = classmap[sys.argv[1]]
+            args = sys.argv[2:]
+        elif Path(sys.argv[0]).with_suffix("").name == f"home-{key}":
+            cls = classmap[key]
+            args = sys.argv[1:]
+        else:
+            return None
+        return cls, args
+
+    for name in classmap:
+        if params := check(name):
+            cls, args = params
+            break 
+    else:
+        if fallback:
+            return fallback(sys.argv[1:])
+        argparse.ArgumentParser().error("no command found")
+
+    parser = argparse.ArgumentParser(formatter_class=F)
+    cls.add_arguments(parser)
+    options = cls.process_options(parser.parse_args(args))
+    try:
+        return cls.run(**options.__dict__)
+    except Exception as e:
+        log.exception(str(e))
+        parser.error(str(e))
+
+
+## Support functions
+
+@contextlib.contextmanager
+def check_or_skip(path, tag):
+    path = Path(path).expanduser()
+    if path.exists() and tag in path.read_text():
+        log.info("skipping %s", path)
+        yield None
+    else:
+        log.info("fixing %s", path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+") as fp:
+            yield fp
+
+
+## ** fixers
+
+
+def fix_vimrc(path="~/.vimrc", tag=HOMETAG):
+    path = Path(path).expanduser()
+
+    tag = f"\" {tag}"
+    with check_or_skip(path, tag) as fp:
+        if not fp:
+            return
+        print(tag, file=fp)
+        print(f"\" source {HOMEDIR / 'config/vimrc'}", file=fp)
+
+
+def fix_bashrc(path="~/.bash_profile", tag=HOMETAG):
+    path = Path(path).expanduser()
+
+    tag = f"# {tag}"
+    with check_or_skip(path, tag) as fp:
+        if not fp:
+            return
+        print(tag, file=fp)
+        print(f"# [ -e {HOMEDIR / 'config/bash.fns'} ] && source {HOMEDIR / 'config/bash.fns'}", file=fp)
+        print(f"# [ -e {HOME / '.config/home/bashrc'} ] && source {HOME / '.config/home/bashrc'}", file=fp)
+
+
+def fix_backup(path="~/.config/home/backup.txt", tag=HOMETAG):
+    path = Path(path).expanduser()
+
+    tag = f"# {tag}"
+    with check_or_skip(path, tag) as fp:
+        if not fp:
+            return
+        print(tag, file=fp)
+        print(f"{HOME / '.config/home'}", file=fp)
+
+
+def fix_git():
+    def gset(key, value=None):
+        cmd = ["git", "config", "--global", key]
+        if value:
+            cmd.append(value)
+        ret = subprocess.run([str(c) for c in cmd],
+            encoding="utf-8",
+            capture_output=True
+        )
+        if ret.returncode == 1:
+            return None
+        return ret.stdout.strip()
+
+
+    keymap = {
+        "commit.verbose" : "true",
+        "pull.rebase": "true",
+        "alias.st": "status",
+        "alias.purge": "clean -f -d",
+        "alias.co": "checkout",
+        "alias.br": "branch",
+        "alias.lg": "log --color --pretty=format:'%Cred%h%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit",
+    }
+    for key, value in keymap.items():
+        result = gset(key)
+        if result is None:
+            log.info("updating git config [%s] with '%s'", key, value)
+            gset(key, value)
+        else:
+            log.info("git [%s] set to [%s]", key, result)
+
+
+def fix_git_ignore(path=HOMEGITDIR / "info/exclude", tag=HOMETAG):
+    tag = f"# tag"
+    with check_or_skip(path, tag) as fp:
+        if not fp:
+            return
+        print(tag, file=fp)
+        print("*", file=fp)
+
