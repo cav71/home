@@ -376,7 +376,7 @@ def fix_git(homeroot: Path):
         if value:
             cmd.append(value)
         env = copy.deepcopy(os.environ)
-        env["GIT_CONFIG_GLOBAL"] = str(homeroot) / ".gitconfig"
+        env["GIT_CONFIG_GLOBAL"] = str(homeroot / ".gitconfig")
         ret = subprocess.run([str(c) for c in cmd],
             encoding="utf-8",
             env=env,
