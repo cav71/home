@@ -16,11 +16,13 @@ import tarfile
 from pathlib import Path
 
 THISDIR = Path(__file__).parent.absolute()                  # ~/.home
-CONFIGDIR = Path("~/.config/home").expanduser().absolute()  # ~/.config/home
 
-HOME = Path(os.getenv("HOME"))                              # ~/
-HOMEDIR = Path("~/.home").expanduser().absolute()           # ~/.home
-HOMEGITDIR = Path(f"{HOMEDIR}.git")                         # ~/.home.git
+HOMEROOT = Path(os.getenv("HOMEROOT", "~")).expanduser().absolute()
+CONFIGDIR = HOMEROOT / ".config/home"
+
+# REMOVE HOME = Path(os.getenv("HOME"))                              # ~/
+# REMOVE HOMEDIR = Path("~/.home").expanduser().absolute()           # ~/.home
+# REMOVE HOMEGITDIR = Path(f"{HOMEDIR}.git")                         # ~/.home.git
 
 HOMETAG = "MODIFIED BY HOME PATCH"
 
@@ -254,17 +256,18 @@ class Tar(TarBase):
             self.tgz.add(path, arcname=name, filter=filter)
 
 
-def grun(cmds, dryrun=False):
-    cmds = [ "git",
-        "--git-dir", HOMEGITDIR,
-        "--work-tree", HOME,
-        *cmds
-    ]
-    cmds = [str(c) for c in cmds]
-    if dryrun:
-        log.debug("executing: %s", " ".join(cmds))
-        return
-    subprocess.check_call(cmds)
+# REMOVE
+# def grun(cmds, dryrun=False):
+#     cmds = [ "git",
+#         "--git-dir", HOMEGITDIR,
+#         "--work-tree", HOME,
+#         *cmds
+#     ]
+#     cmds = [str(c) for c in cmds]
+#     if dryrun:
+#         log.debug("executing: %s", " ".join(cmds))
+#         return
+#     subprocess.check_call(cmds)
 
 
 class Command:
