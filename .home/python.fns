@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import copy
 import sys
 import re
 import argparse
@@ -346,47 +347,39 @@ def check_or_skip(path, tag):
 ## ** fixers
 
 
-def fix_vimrc(path="~/.vimrc", tag=HOMETAG):
-    path = Path(path).expanduser()
+def fix_vimrc(homeroot: Path, homedir: Path, path=".vimrc", tag=HOMETAG) -> Path:
+    print(f"XXX {homeroot=}, {path=}")
+    path = homeroot / path
 
     tag = f"\" {tag}"
     with check_or_skip(path, tag) as fp:
         if not fp:
             return
         print(tag, file=fp)
-        print(f"\" source {HOMEDIR / 'config/vimrc'}", file=fp)
+        print(f"\" source {homedir / 'config/vimrc'}", file=fp)
+    return path
 
 
-def fix_bashrc(path="~/.bash_profile", tag=HOMETAG):
-    path = Path(path).expanduser()
-
+def fix_bashrc(homedir: Path, configdir: Path, path=".bash_profile", tag=HOMETAG):
     tag = f"# {tag}"
     with check_or_skip(path, tag) as fp:
         if not fp:
             return
         print(tag, file=fp)
-        print(f"# [ -e {HOMEDIR / 'config/bash.fns'} ] && source {HOMEDIR / 'config/bash.fns'}", file=fp)
-        print(f"# [ -e {HOME / '.config/home/bashrc'} ] && source {HOME / '.config/home/bashrc'}", file=fp)
+        print(f"# [ -e {homedir / 'config/bash.fns'} ] && source {homedir / 'config/bash.fns'}", file=fp)
+        print(f"# [ -e {configdir / 'bashrc'} ] && source {configdir / 'bashrc'}", file=fp)
 
 
-def fix_backup(path="~/.config/home/backup.txt", tag=HOMETAG):
-    path = Path(path).expanduser()
-
-    tag = f"# {tag}"
-    with check_or_skip(path, tag) as fp:
-        if not fp:
-            return
-        print(tag, file=fp)
-        print(f"{HOME / '.config/home'}", file=fp)
-
-
-def fix_git():
+def fix_git(homeroot: Path):
     def gset(key, value=None):
         cmd = ["git", "config", "--global", key]
         if value:
             cmd.append(value)
+        env = copy.deepcopy(os.environ)
+        env["GIT_CONFIG_GLOBAL"] = str(homeroot) / ".gitconfig"
         ret = subprocess.run([str(c) for c in cmd],
             encoding="utf-8",
+            env=env,
             capture_output=True
         )
         if ret.returncode == 1:
@@ -412,7 +405,9 @@ def fix_git():
             log.info("git [%s] set to [%s]", key, result)
 
 
-def fix_git_ignore(path=HOMEGITDIR / "info/exclude", tag=HOMETAG):
+def fix_git_ignore(homegitdir: Path, path="info/exclude", tag=HOMETAG):
+    path = homegitdir / path
+
     tag = f"# tag"
     with check_or_skip(path, tag) as fp:
         if not fp:
@@ -420,3 +415,13 @@ def fix_git_ignore(path=HOMEGITDIR / "info/exclude", tag=HOMETAG):
         print(tag, file=fp)
         print("*", file=fp)
 
+
+def fix_backup(configdir: Path, path="backup.txt", tag=HOMETAG):
+    path = configdir / path
+
+    tag = f"# {tag}"
+    with check_or_skip(path, tag) as fp:
+        if not fp:
+            return
+        print(tag, file=fp)
+        print(f"{configdir}", file=fp)
