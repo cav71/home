@@ -360,6 +360,7 @@ def fix_vimrc(homeroot: Path, homedir: Path, path=".vimrc", tag=HOMETAG) -> Path
 
 
 def fix_bashrc(homedir: Path, configdir: Path, path=".bash_profile", tag=HOMETAG):
+    path = homedir / path
     tag = f"# {tag}"
     with check_or_skip(path, tag) as fp:
         if not fp:
