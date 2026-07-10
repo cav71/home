@@ -348,7 +348,6 @@ def check_or_skip(path, tag):
 
 
 def fix_vimrc(homeroot: Path, homedir: Path, path=".vimrc", tag=HOMETAG) -> Path:
-    print(f"XXX {homeroot=}, {path=}")
     path = homeroot / path
 
     tag = f"\" {tag}"
