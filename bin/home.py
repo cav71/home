@@ -65,7 +65,7 @@ if (path := (HOMEDIR / "python.fns")).exists():
     homelib = loadmod(path)
     if (HOMEGITDIR / "patched.txt").exists():
         STATUS = Status.READY
-elif all(p.exists() for p in [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home")]:
+elif all(p.exists() for p in [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home")]):
     STATUS = Status.FROMCHECKOUT
 else:
     STATUS = Status.NOTREADY
