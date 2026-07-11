@@ -263,6 +263,8 @@ def main():
         if len(sys.argv) != 2 or sys.argv[1] != "patch":
             print("home.py not patched, please run: home.py patch", file=sys.stderr)
             sys.exit(1)
+    elif STATUS == Status.READY:
+        pass
     else:
         raise RuntimeError(f"Unhandled status {STATUS}")
 
