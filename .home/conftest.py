@@ -15,12 +15,14 @@ def home(request, tmp_path_factory):
         path: Path
         name: str = ""
 
-        def create(self, sub: str = "") -> Path:
-            self.path = self.path / request.function.__name__ / sub
-            self.path = self.path.resolve()
-            self.path.mkdir(parents=True, exist_ok=True)
-            return self.path
+        def __post_init__(self):
+            self.path = (self.path / request.function.__name__).resolve()
 
+        def create(self, sub: str = "") -> Path:
+            path = self.path / sub
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        
         def copy_homepy(self, subpath: str = "") -> Path:
             orig = Path(__file__).parent.parent / "bin" / "home.py"
             dst = self.path / subpath

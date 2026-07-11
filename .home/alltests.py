@@ -28,24 +28,19 @@ def test_copy_homepy(home):
     homepy = home.copy_homepy()
     out = json.loads(home.run([sys.executable, homepy], test=1)[1])
     assert out["status"] == "Status.NOTREADY"
-
-
-def test_prepare(home, homepy=None):
-    if not homepy:
-        home.create()
-        homepy = home.copy_homepy()
     return homepy
 
 
-def test_install(home, homepy=None):
-    homepy = test_prepare(home, homepy)
+def test_install(home, homepy=None, homerepo=None):
+    homepy = homepy or test_copy_homepy(home)
+    homerepo = homerepo or Path(__file__).parent.parent
 
     ret, out, err = home.run([sys.executable, homepy], test=0)
     assert "please run: home.py install" in err
     assert not check_files(home.path, 
         [ "bin/home.py", ".home", ".home.git", ".vimrc", ".bash_profile", ".bashrc" ], exists=False)
 
-    ret, out, err = home.run([sys.executable, homepy, "install"], test=0, envs={"HOMEREPO": Path(__file__).parent.parent})
+    ret, out, err = home.run([sys.executable, homepy, "install"], test=0, envs={"HOMEREPO": homerepo})
     assert "setup completed, please run: ~/bin/home.py patch" in err
     assert not check_files(home.path,
         [ "bin/home.py", ".home", ".home.git" ], exists=True)
@@ -63,7 +58,7 @@ def test_install(home, homepy=None):
 
 
 def test_install_and_patch_from_homepy_file(home, homepy=None):
-    homepy = test_prepare(home, homepy)
+    homepy = homepy or test_copy_homepy(home)
 
     test_install(home, homepy)
 
@@ -80,6 +75,28 @@ def test_install_and_patch_from_homepy_file(home, homepy=None):
 
 def test_clone_homepy(home):
     cmd = ["git",
-        "clone", Path(__file__).parent.parent, home.create("downloads")
+        "clone", Path(__file__).parent.parent, home.create("downloads/checkout")
     ]
     subprocess.check_call([str(a) for a in cmd])
+
+    homepy = home.path / "downloads" / "checkout" /"bin" / "home.py"
+    assert homepy.exists()
+
+    ret, out, err = home.run([sys.executable, homepy], test=1)
+    out = json.loads(home.run([sys.executable, homepy], test=1)[1])
+    assert (ret, out["status"]) == (0, "Status.NOTREADY")
+    return homepy
+
+
+def test_install_from_clone(home):
+    homepy = test_clone_homepy(home)
+
+    ret, out, err = home.run([sys.executable, homepy], test=0)
+    assert "please run: home.py install" in err
+    assert not check_files(home.path, 
+        [ "bin/home.py", ".home", ".home.git", ".vimrc", ".bash_profile", ".bashrc" ], exists=False)
+
+    ret, out, err = home.run([sys.executable, homepy], test=0)
+    breakpoint()
+    pass
+
