@@ -270,7 +270,7 @@ def main():
 
     def git(args):
         env = copy.deepcopy(os.environ)
-        env["GIT_CONFIG_GLOBAL"] = HOMEROOT / ".gitconfig"
+        env["GIT_CONFIG_GLOBAL"] = str(HOMEROOT / ".gitconfig")
         cmd = [ "git",
             f"--git-dir={HOMEGITDIR}",
             f"--work-tree={HOMEROOT}",
