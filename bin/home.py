@@ -60,7 +60,8 @@ STATUS = None
 homelib = None
 gitfiles = [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home"]
 
-if (path := (HOMEDIR / "python.fns")).exists(): 
+path = HOMEDIR / "python.fns"
+if path.exists(): 
     STATUS = Status.INSTALLED
     homelib = loadmod(path)
     if (HOMEGITDIR / "patched.txt").exists():
@@ -98,7 +99,7 @@ log = logging.getLogger(__name__)
 def install():
     if STATUS == Status.FROMCHECKOUT:
         rootdir = Path(__file__).parent.parent
-    elif STATUS == Status.FROMREPO::
+    elif STATUS == Status.FROMREPO:
         rootdir = Path("deleteme.home.checkout")
         if rootdir.exists():
             raise RuntimeError(f"target dir exists: {rootdir}")
