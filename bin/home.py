@@ -59,8 +59,7 @@ FROMCHECKOUT = False
 
 STATUS = None #Status.NOTREADY
 homelib = None
-homelibpath =  None
-gitfiles = [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home")]
+gitfiles = [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home"]
 
 if (path := (HOMEDIR / "python.fns")).exists(): 
     STATUS = Status.INSTALLED
