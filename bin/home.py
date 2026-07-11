@@ -8,32 +8,32 @@ git clone git@github.com:cav71/home.git
 import os
 import sys
 import argparse
+import copy
 import logging
 import subprocess
 import contextlib
 import shutil
 import datetime
 import tempfile
+import json
 import types
 from enum import auto, Enum
 from pathlib import Path
 
-REPO = "https://github.com/cav71/home.git"
+REPO = os.getenv("HOMEREPO", "https://github.com/cav71/home.git")
 DEFINITIONS = {
     "HOMEROOT": "~",
     "HOMEDIR": ".home",
     "HOMEGITDIR": ".home.git",
     "CONFIGDIR": ".config/home",
 }
-for key, default in DEFINITIONS.items():
-    fallback = Path(os.environ.get(key, default)).expanduser()
-    if key == "HOMEROOT":
-        globals()[key] = (Path.cwd() / fallback).resolve()
-    else:
-        globals()[key] = (HOMEROOT / fallback).resolve()
 
 
-log = logging.getLogger(__name__)
+class Status(Enum):
+    # ADD FROMREPO, FROMFILE, FROMZIP
+    NOTREADY = auto()
+    INSTALLED = auto()
+    READY = auto()
 
 
 def loadmod(path):
@@ -46,54 +46,50 @@ def loadmod(path):
     return module
 
 
-class Status(Enum):
-    NOTREADY = auto()
-    CHECKOUT = auto()
-    INSTALLED = auto()
-    UNKNOWN = auto()
-
-STATUS = Status.NOTREADY
+HOMETESTRUN = int(os.getenv("HOMETESTRUN", "0"))
+for key, default in DEFINITIONS.items():
+    fallback = Path(os.environ.get(key, default)).expanduser()
+    globals()[key] = (Path.cwd() if key == "HOMEROOT" else HOMEROOT / fallback).resolve()
 
 
 INSTALLED = False
 FROMCHECKOUT = False
-PATCHED = False
-try:
-    homelib = loadmod(HOMEDIR / "python.fns")
+
+
+STATUS = None #Status.NOTREADY
+homelib = None
+homelibpath =  None
+if (path := (HOMEDIR / "python.fns")).exists(): 
     STATUS = Status.INSTALLED
-except FileNotFoundError:
-    checkout = (Path(__file__).parent.parent / ".home" / "python.fns").exists()
-    if checkout:
-        STATUS = Status.CHECKOUT
-        homelib = loadmod(Path(__file__).parent.parent / ".home" / "python.fns")
-    else:
-        STATUS = Status.UNKNOWN
-        class Dummy: pass
-        homelib = types.ModuleType("homelib")
-        homelib.Command = Dummy
-        homelib.HOMEDIR = HOMEDIR
-        homelib.HOMEGITDIR = HOMEGITDIR
-#     INSTALLED = True
-#     PATCHED = CONFIGDIR.exists()
-# except FileNotFoundError:
-#     FROMCHECKOUT = (Path(__file__).parent.parent / ".home" / "python.fns").exists()
-#     if FROMCHECKOUT:
-#         homelib = loadmod(Path(__file__).parent.parent / ".home" / "python.fns")
-#     else:
-#         class Dummy: pass
-#         homelib = types.ModuleType("homelib")
-#         homelib.Command = Dummy
-#         homelib.HOMEDIR = HOMEDIR
-#         homelib.HOMEGITDIR = HOMEGITDIR
+    homelib = loadmod(path)
+    if (HOMEGITDIR / "patched.txt").exists():
+        STATUS = Status.READY
+else:
+    STATUS = Status.NOTREADY
 
-if os.environ.get("HOMETESTRUN"):
-    print(STATUS)
-    if int(os.environ.get("HOMETESTRUN")) > 1:
-        for key, _ in DEFINITIONS.items():
-            print(" ", key, globals().get(key))
-    sys.exit()
 
-sys.exit()
+if not homelib:
+    class Dummy: pass
+    homelib = types.ModuleType("homelib")
+    homelib.Command = Dummy
+    homelib.HOMEDIR = HOMEDIR
+    homelib.HOMEGITDIR = HOMEGITDIR
+
+
+if HOMETESTRUN or not STATUS:
+    result = {
+        "status": str(STATUS),
+        "homelib": str(homelib),
+        "envs": {
+            key: str(globals().get(key))
+            for key in ["HOMETESTRUN", *DEFINITIONS.keys()]
+        }
+    }
+    print(json.dumps(result, indent=2))
+    sys.exit(0 if STATUS else 1)
+
+
+log = logging.getLogger(__name__)
 
 
 def install():
@@ -124,7 +120,9 @@ def install():
     def grun(cmds):
         HOME = Path(os.getenv("HOME"))
         cmds = [ "git",
-            "--git-dir", HOMEGITDIR,                                                                                                                                                                                        "--work-tree", HOME,                                                                                                                                                                                            *cmds
+            "--git-dir", HOMEGITDIR,
+            "--work-tree", HOMEROOT,
+            *cmds
         ]
         cmds = [str(c) for c in cmds]
         subprocess.check_call(cmds)
@@ -167,12 +165,14 @@ class Patch(homelib.Command):
     TAG = "MODIFIED BY HOME PATCH"
     @classmethod
     def run(cls):
-        homelib.fix_vimrc()
-        homelib.fix_bashrc()
-        homelib.fix_git()
-        homelib.fix_git_ignore()
-        homelib.fix_backup()
+        homelib.fix_vimrc(HOMEROOT, HOMEDIR)
+        homelib.fix_bashrc(HOMEDIR, CONFIGDIR)
+        homelib.fix_git(HOMEROOT)
+        homelib.fix_git_ignore(HOMEGITDIR)
+
         CONFIGDIR.mkdir(parents=True, exist_ok=True)
+        homelib.fix_backup(CONFIGDIR)
+        (HOMEGITDIR / "patched.txt").write_text("")
 
 
 class Triplet(homelib.Command):
@@ -248,22 +248,25 @@ class Help(homelib.Command):
     
 
 def main():
-    if not INSTALLED:
+    git = None
+    if STATUS == Status.NOTREADY:
         logging.basicConfig(level=logging.DEBUG)
         if len(sys.argv) != 2 or sys.argv[1] != "install":
             print("home.py not installed, please run: home.py install", file=sys.stderr)
             sys.exit(1)
         install()
         sys.exit(0)
-    elif not PATCHED:
-        logging.basicConfig(level=logging.DEBUG)
+    elif STATUS == Status.INSTALLED:
         if len(sys.argv) != 2 or sys.argv[1] != "patch":
             print("home.py not patched, please run: home.py patch", file=sys.stderr)
             sys.exit(1)
+
     def git(args):
+        env = copy.deepcopy(os.environ)
+        env["GIT_CONFIG_GLOBAL"] = HOMEROOT / ".gitconfig"
         cmd = [ "git",
-            f"--git-dir={homelib.HOMEGITDIR}",
-            f"--work-tree={os.getenv('HOME')}",
+            f"--git-dir={HOMEGITDIR}",
+            f"--work-tree={HOMEROOT}",
             *args,
         ]
         subprocess.call([str(a) for a in cmd], encoding="utf-8")
