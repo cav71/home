@@ -32,6 +32,7 @@ DEFINITIONS = {
 class Status(Enum):
     # ADD FROMREPO, FROMFILE, FROMZIP
     NOTREADY = auto()
+    FROMCHECKOUT = auto()
     INSTALLED = auto()
     READY = auto()
 
@@ -64,6 +65,8 @@ if (path := (HOMEDIR / "python.fns")).exists():
     homelib = loadmod(path)
     if (HOMEGITDIR / "patched.txt").exists():
         STATUS = Status.READY
+elif all(p.exists() for p in [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home")]:
+    STATUS = Status.FROMCHECKOUT
 else:
     STATUS = Status.NOTREADY
 
@@ -93,10 +96,7 @@ log = logging.getLogger(__name__)
 
 
 def install():
-    # mv home/.git ~/.home.git
-    # mv home ~/.home
-    # git --git-dir $HOME/.home.git --work-tree $HOME reset --hard
-    if FROMCHECKOUT:
+    if STATUS == Status.FROMCHECKOUT:
         rootdir = Path(__file__).parent.parent
     else:
         rootdir = Path("deleteme.home.checkout")
@@ -249,7 +249,7 @@ class Help(homelib.Command):
 
 def main():
     git = None
-    if STATUS == Status.NOTREADY:
+    if STATUS in {Status.FROMCHECKOUT, Status.NOTREADY}:
         logging.basicConfig(level=logging.DEBUG)
         if len(sys.argv) != 2 or sys.argv[1] != "install":
             print("home.py not installed, please run: home.py install", file=sys.stderr)
@@ -260,6 +260,8 @@ def main():
         if len(sys.argv) != 2 or sys.argv[1] != "patch":
             print("home.py not patched, please run: home.py patch", file=sys.stderr)
             sys.exit(1)
+    else:
+        raise RuntimeError(f"Unhandled status {STATUS}")
 
     def git(args):
         env = copy.deepcopy(os.environ)
