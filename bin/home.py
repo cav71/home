@@ -30,8 +30,7 @@ DEFINITIONS = {
 
 
 class Status(Enum):
-    # ADD FROMREPO, FROMFILE, FROMZIP
-    NOTREADY = auto()
+    FROMREPO = auto()
     FROMCHECKOUT = auto()
     INSTALLED = auto()
     READY = auto()
@@ -57,7 +56,7 @@ INSTALLED = False
 FROMCHECKOUT = False
 
 
-STATUS = None #Status.NOTREADY
+STATUS = None
 homelib = None
 gitfiles = [Path(__file__).parent.parent / ".git", Path(__file__).parent.parent / ".home"]
 
@@ -69,7 +68,7 @@ if (path := (HOMEDIR / "python.fns")).exists():
 elif all(p.exists() for p in gitfiles):
     STATUS = Status.FROMCHECKOUT
 else:
-    STATUS = Status.NOTREADY
+    STATUS = Status.FROMREPO
 
 
 if not homelib:
@@ -99,11 +98,13 @@ log = logging.getLogger(__name__)
 def install():
     if STATUS == Status.FROMCHECKOUT:
         rootdir = Path(__file__).parent.parent
-    else:
+    elif STATUS == Status.FROMREPO::
         rootdir = Path("deleteme.home.checkout")
         if rootdir.exists():
             raise RuntimeError(f"target dir exists: {rootdir}")
         subprocess.check_call(["git", "clone", REPO, str(rootdir)])
+    else:
+        raise RuntimeError(f"Un-handled install {STATUS=}")
 
 
     assert not homelib.HOMEDIR.exists(), f"{homelib.HOMEDIR} present"
@@ -250,7 +251,7 @@ class Help(homelib.Command):
 
 def main():
     git = None
-    if STATUS in {Status.FROMCHECKOUT, Status.NOTREADY}:
+    if STATUS in {Status.FROMCHECKOUT, Status.FROMREPO}:
         logging.basicConfig(level=logging.DEBUG)
         if len(sys.argv) != 2 or sys.argv[1] != "install":
             print("home.py not installed, please run: home.py install", file=sys.stderr)

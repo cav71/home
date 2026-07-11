@@ -27,7 +27,7 @@ def test_copy_homepy(home):
     home.create()
     homepy = home.copy_homepy()
     out = json.loads(home.run([sys.executable, homepy], test=1)[1])
-    assert out["status"] == "Status.NOTREADY"
+    assert out["status"] == "Status.FROMREPO"
     return homepy
 
 
@@ -84,7 +84,7 @@ def test_clone_homepy(home):
 
     ret, out, err = home.run([sys.executable, homepy], test=1)
     out = json.loads(home.run([sys.executable, homepy], test=1)[1])
-    assert (ret, out["status"]) == (0, "Status.NOTREADY")
+    assert (ret, out["status"]) == (0, "Status.FROMCHECKOUT")
     return homepy
 
 
@@ -95,8 +95,3 @@ def test_install_from_clone(home):
     assert "please run: home.py install" in err
     assert not check_files(home.path, 
         [ "bin/home.py", ".home", ".home.git", ".vimrc", ".bash_profile", ".bashrc" ], exists=False)
-
-    ret, out, err = home.run([sys.executable, homepy], test=0)
-    breakpoint()
-    pass
-
